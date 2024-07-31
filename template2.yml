@@ -41,6 +41,7 @@ Resources:
                   - 's3:ListBucket'
                   - 'logs:*'
                   - 'iam:PassRole'
+                  - 'codestar-connections:UseConnection'
                 Resource: '*'
 
   # Security Group for EC2
@@ -201,12 +202,14 @@ Resources:
                   - 'codebuild:BatchGetBuilds'
                   - 'codebuild:StartBuild'
                   - 'codebuild:BatchGetProjects'
+                  - 'codestar-connections:UseConnection'
                 Resource: '*'
 
   # CodePipeline
   MyPipeline:
     Type: 'AWS::CodePipeline::Pipeline'
     Properties:
+      PipelineType: 'V2'
       RoleArn: !GetAtt CodePipelineServiceRole.Arn
       ArtifactStore:
         Type: 'S3'
@@ -217,31 +220,27 @@ Resources:
             - Name: SourceAction1  #this is source 1 where buildspec file taken from
               ActionTypeId:
                 Category: Source
-                Owner: ThirdParty
-                Provider: GitHub
+                Owner: AWS
+                Provider: CodeStarSourceConnection
                 Version: 1
               OutputArtifacts:
                 - Name: SourceArtifact1
               Configuration:
-                Owner: 'techdecipher'
-                Repo: 'source-1' #source-1 repository
-                Branch: 'main'
-                OAuthToken: 'my-secrete'
-                PollForSourceChanges: false
-              RunOrder: 1
+                ConnectionArn: 'my-arn-codestar-connection'
+                FullRepositoryId: 'techdecipher/source-1' #source-1 repository 
+                BranchName: 'main'
             - Name: SourceAction2  #this is source 2 where appspec, index file and other relates files are taken from
               ActionTypeId:
                 Category: Source
-                Owner: ThirdParty
-                Provider: GitHub
+                Owner: AWS
+                Provider: CodeStarSourceConnection
                 Version: 1
               OutputArtifacts:
                 - Name: SourceArtifact2
               Configuration:
-                Owner: 'techdecipher'
-                Repo: 'source-2'  #source-2 repository
-                Branch: 'main'
-                OAuthToken: 'my-secrete'
+                ConnectionArn: 'my-arn-codestar-connection'
+                FullRepositoryId: 'techdecipher/source-2' #source-2 repository 
+                BranchName: 'main'
         - Name: Build
           Actions:
             - Name: BuildAction
@@ -271,22 +270,17 @@ Resources:
               Configuration:
                 ApplicationName: !Ref CodeDeployApplication
                 DeploymentGroupName: !Ref CodeDeployDeploymentGroup
-  # Webhook for SourceAction1
-  PipelineWebhook:
-    Type: AWS::CodePipeline::Webhook
-    Properties:
-      Authentication: GITHUB_HMAC
-      AuthenticationConfiguration:
-        SecretToken: 'my-secrete-2'
-      Filters:
-        - JsonPath: "$.ref"
-          MatchEquals: refs/heads/main
-      TargetPipeline: !Ref MyPipeline
-      TargetAction: SourceAction1
-      Name: PipelineWebhook
-      TargetPipelineVersion: !GetAtt MyPipeline.Version
-      RegisterWithThirdParty: true
-
+      Triggers:
+        - ProviderType: CodeStarSourceConnection
+          GitConfiguration:
+            Push:
+              - Branches:
+                  Excludes:
+                    - main
+                FilePaths:
+                  Excludes:
+                    - '**/*'
+            SourceActionName: SourceAction1
 Outputs:
   InstanceId:
     Description: 'InstanceId of the newly created EC2 instance'
@@ -303,6 +297,3 @@ Outputs:
   CodePipelineName:
     Description: 'Name of the CodePipeline'
     Value: !Ref MyPipeline
-  WebhookURL:
-    Description: 'Webhook URL for SourceAction1'
-    Value: !GetAtt PipelineWebhook.Url
