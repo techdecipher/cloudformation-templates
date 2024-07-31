@@ -1,0 +1,308 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Complete CI/CD Pipeline using CNF with EC2, CodeBuild, CodeDeploy, Deployment Group, and CodePipeline
+
+Resources:
+  # Unified IAM Role with Necessary Permissions
+  UnifiedCICDRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'ec2.amazonaws.com'
+                - 'codebuild.amazonaws.com'
+                - 'codedeploy.amazonaws.com'
+                - 'codepipeline.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'UnifiedCICDPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'ec2:Describe*'
+                  - 'ec2:AuthorizeSecurityGroupIngress'
+                  - 'ec2:AuthorizeSecurityGroupEgress'
+                  - 'ec2:RevokeSecurityGroupIngress'
+                  - 'ec2:RevokeSecurityGroupEgress'
+                  - 'ec2:CreateSecurityGroup'
+                  - 'ec2:DeleteSecurityGroup'
+                  - 'ec2:CreateTags'
+                  - 'ec2:DeleteTags'
+                  - 'codebuild:*'
+                  - 'codedeploy:*'
+                  - 'codepipeline:*'
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                  - 'logs:*'
+                  - 'iam:PassRole'
+                Resource: '*'
+
+  # Security Group for EC2
+  InstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Enable SSH and HTTP access'
+      VpcId: 'vpc-08feca1900f25be53'
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: 'tcp'
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '0.0.0.0/0'
+
+  # Instance Profile for EC2
+  UnifiedInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref UnifiedCICDRole
+
+  # EC2 Instance
+  MyEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: 't2.micro'
+      KeyName: 'sample-app-using-ec2'
+      ImageId: 'ami-074be47313f84fa38'
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      IamInstanceProfile: !Ref UnifiedInstanceProfile
+      UserData: !Base64 |
+        #!/bin/bash
+        yum update -y
+        yum install -y httpd
+        systemctl start httpd
+        systemctl enable httpd
+        # Install CodeDeploy Agent
+        yum install -y ruby
+        cd /home/ec2-user
+        wget https://aws-codedeploy-us-west-2.s3.us-west-2.amazonaws.com/latest/install
+        chmod +x ./install
+        ./install auto
+        service codedeploy-agent start
+      AvailabilityZone: us-west-2b
+      Tags:
+        - Key: Name
+          Value: SampleAppEC2
+        - Key: Intent
+          Value: SampleAppEC2
+
+  # CodeBuild Project
+  MyCodeBuildProject:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: 'SampleCB'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: 'CODEPIPELINE'
+      Environment:
+        ComputeType: 'BUILD_GENERAL1_SMALL'
+        Image: 'aws/codebuild/standard:4.0'
+        Type: 'LINUX_CONTAINER'
+      Source:
+        Type: 'CODEPIPELINE'
+      TimeoutInMinutes: 10
+
+  # IAM Role for CodeBuild
+  CodeBuildServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'codebuild.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'CodeBuildPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                  - 'ec2:Describe*'
+                  - 'codedeploy:*'
+                  - 'codepipeline:*'
+                Resource: '*'
+
+  # CodeDeploy Application
+  CodeDeployApplication:
+    Type: 'AWS::CodeDeploy::Application'
+    Properties:
+      ApplicationName: 'SampleCDApp'
+
+  # CodeDeploy Deployment Group
+  CodeDeployDeploymentGroup:
+    Type: 'AWS::CodeDeploy::DeploymentGroup'
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: 'SampleDG'
+      ServiceRoleArn: 'arn:aws:iam::363010889649:role/CodeDeploy-custom-roles'
+      DeploymentConfigName: CodeDeployDefault.OneAtATime
+      Ec2TagFilters:
+        - Key: Name
+          Value: SampleAppEC2
+          Type: KEY_AND_VALUE
+
+  # S3 Bucket for CodePipeline Artifacts
+  ArtifactBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'sample-cicd-artifacts-bucket-70' 
+
+  # IAM Role for CodePipeline
+  CodePipelineServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'codepipeline.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'CodePipelinePolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                  - 'codedeploy:CreateDeployment'
+                  - 'codedeploy:GetApplication'
+                  - 'codedeploy:GetApplicationRevision'
+                  - 'codedeploy:GetDeployment'
+                  - 'codedeploy:GetDeploymentConfig'
+                  - 'codedeploy:RegisterApplicationRevision'
+                  - 'codebuild:BatchGetBuilds'
+                  - 'codebuild:StartBuild'
+                  - 'codebuild:BatchGetProjects'
+                Resource: '*'
+
+  # CodePipeline
+  MyPipeline:
+    Type: 'AWS::CodePipeline::Pipeline'
+    Properties:
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: 'S3'
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source   
+          Actions:
+            - Name: SourceAction1  #this is source 1 where buildspec file taken from
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: 1
+              OutputArtifacts:
+                - Name: SourceArtifact1
+              Configuration:
+                Owner: 'techdecipher'
+                Repo: 'source-1' #source-1 repository
+                Branch: 'main'
+                OAuthToken: 'my-secrete'
+                PollForSourceChanges: false
+              RunOrder: 1
+            - Name: SourceAction2  #this is source 2 where appspec, index file and other relates files are taken from
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: 1
+              OutputArtifacts:
+                - Name: SourceArtifact2
+              Configuration:
+                Owner: 'techdecipher'
+                Repo: 'source-2'  #source-2 repository
+                Branch: 'main'
+                OAuthToken: 'my-secrete'
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              InputArtifacts:   #combining artifact from the 2 seperate sources 
+                - Name: SourceArtifact1
+                - Name: SourceArtifact2
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref MyCodeBuildProject
+                PrimarySource: SourceArtifact1
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeploy
+                Version: 1
+              InputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ApplicationName: !Ref CodeDeployApplication
+                DeploymentGroupName: !Ref CodeDeployDeploymentGroup
+  # Webhook for SourceAction1
+  PipelineWebhook:
+    Type: AWS::CodePipeline::Webhook
+    Properties:
+      Authentication: GITHUB_HMAC
+      AuthenticationConfiguration:
+        SecretToken: 'my-secrete-2'
+      Filters:
+        - JsonPath: "$.ref"
+          MatchEquals: refs/heads/main
+      TargetPipeline: !Ref MyPipeline
+      TargetAction: SourceAction1
+      Name: PipelineWebhook
+      TargetPipelineVersion: !GetAtt MyPipeline.Version
+      RegisterWithThirdParty: true
+
+Outputs:
+  InstanceId:
+    Description: 'InstanceId of the newly created EC2 instance'
+    Value: !Ref MyEC2Instance
+  CodeBuildProjectName:
+    Description: 'Name of the CodeBuild project'
+    Value: !Ref MyCodeBuildProject
+  CodeDeployApplicationName:
+    Description: 'Name of the CodeDeploy application'
+    Value: !Ref CodeDeployApplication
+  CodeDeployDeploymentGroupName:
+    Description: 'Name of the CodeDeploy deployment group'
+    Value: !Ref CodeDeployDeploymentGroup
+  CodePipelineName:
+    Description: 'Name of the CodePipeline'
+    Value: !Ref MyPipeline
+  WebhookURL:
+    Description: 'Webhook URL for SourceAction1'
+    Value: !GetAtt PipelineWebhook.Url
