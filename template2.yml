@@ -226,7 +226,7 @@ Resources:
               OutputArtifacts:
                 - Name: SourceArtifact1
               Configuration:
-                ConnectionArn: 'my-arn-codestar-connection'
+                ConnectionArn: 'arn:aws:codeconnections:us-east-1:363010889649:connection/d5c3dd1b-637f-485c-bd2c-c48def2b1fa7'
                 FullRepositoryId: 'techdecipher/source-1' #source-1 repository 
                 BranchName: 'main'
             - Name: SourceAction2  #this is source 2 where appspec, index file and other relates files are taken from
@@ -238,7 +238,7 @@ Resources:
               OutputArtifacts:
                 - Name: SourceArtifact2
               Configuration:
-                ConnectionArn: 'my-arn-codestar-connection'
+                ConnectionArn: 'arn:aws:codeconnections:us-east-1:363010889649:connection/d5c3dd1b-637f-485c-bd2c-c48def2b1fa7'
                 FullRepositoryId: 'techdecipher/source-2' #source-2 repository 
                 BranchName: 'main'
         - Name: Build
