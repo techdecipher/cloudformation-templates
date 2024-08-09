@@ -1,0 +1,143 @@
+pipeline {
+    agent any
+    environment {
+        GITHUB_TOKEN = credentials('classic-token-git') // GitHub token ID from jenkins
+        REPO_NAME = 'Jenkins-Auto-Repository12'         // Repository name
+        MAIN_BRANCH = 'main'                            // Main branch name
+        DEV_BRANCH = 'dev'                              // Dev branch name
+        YOUR_USERNAME = 'techdecipher'                  // Primary accounts GitHub username
+        COLLABORATOR_USERNAME = 'waytopranav'           // Collaborator's GitHub username
+        PERMISSION_LEVEL = 'push'                       // Permission level for the collaborator
+    }
+    stages {
+        stage('Create Git Repository') {
+            steps {
+                script {
+                    httpRequest(
+                        httpMode: 'POST',
+                        url: 'https://api.github.com/user/repos', // Endpoint 
+                        contentType: 'APPLICATION_JSON',
+                        customHeaders: [
+                            [name: 'Authorization', value: 'Bearer ' + GITHUB_TOKEN]
+                        ],
+                        requestBody: """{
+                            "name": "$REPO_NAME",
+                            "private": false
+                        }"""
+                    )
+                }
+            }
+        }
+        stage('Add Initial Commit with CODEOWNERS') {
+            steps {
+                script {
+                    def readmeContent = "Welcome to ${REPO_NAME}"
+                    def codeownersContent = """\
+                    *.html @waytopranav
+                    """
+
+                    httpRequest(
+                        httpMode: 'PUT',
+                        url: 'https://api.github.com/repos/' + YOUR_USERNAME + '/' + REPO_NAME + '/contents/README.md',
+                        contentType: 'APPLICATION_JSON',
+                        customHeaders: [
+                            [name: 'Authorization', value: 'Bearer ' + GITHUB_TOKEN]
+                        ],
+                        requestBody: """{
+                            "message": "Initial commit with README.md and CODEOWNERS",
+                            "content": "${readmeContent.bytes.encodeBase64().toString()}"
+                        }"""
+                    )
+
+                    httpRequest(
+                        httpMode: 'PUT',
+                        url: 'https://api.github.com/repos/' + YOUR_USERNAME + '/' + REPO_NAME + '/contents/.github/CODEOWNERS',
+                        contentType: 'APPLICATION_JSON',
+                        customHeaders: [
+                            [name: 'Authorization', value: 'Bearer ' + GITHUB_TOKEN]
+                        ],
+                        requestBody: """{
+                            "message": "Add CODEOWNERS file",
+                            "content": "${codeownersContent.bytes.encodeBase64().toString()}"
+                        }"""
+                    )
+                }
+            }
+        }
+        stage('Create Dev Branch') {
+            steps {
+                script {
+                    def getMainBranchSHA = httpRequest(
+                        httpMode: 'GET',
+                        url: 'https://api.github.com/repos/' + YOUR_USERNAME + '/' + REPO_NAME + '/git/refs/heads/main',
+                        customHeaders: [
+                            [name: 'Authorization', value: 'Bearer ' + GITHUB_TOKEN]
+                        ]
+                    )
+
+                    def shaMainBranch = new groovy.json.JsonSlurper().parseText(getMainBranchSHA.content).object.sha
+
+                    httpRequest(
+                        httpMode: 'POST',
+                        url: 'https://api.github.com/repos/' + YOUR_USERNAME + '/' + REPO_NAME + '/git/refs',
+                        contentType: 'APPLICATION_JSON',
+                        customHeaders: [
+                            [name: 'Authorization', value: 'Bearer ' + GITHUB_TOKEN]
+                        ],
+                        requestBody: """{
+                            "ref": "refs/heads/${DEV_BRANCH}",
+                            "sha": "$shaMainBranch"
+                        }"""
+                    )
+                }
+            }
+        }
+        stage('Add Collaborator') {
+            steps {
+                script {
+                    httpRequest(
+                        httpMode: 'PUT',
+                        url: 'https://api.github.com/repos/' + YOUR_USERNAME + '/' + REPO_NAME + '/collaborators/' + COLLABORATOR_USERNAME,
+                        contentType: 'APPLICATION_JSON',
+                        customHeaders: [
+                            [name: 'Authorization', value: 'Bearer ' + GITHUB_TOKEN]
+                        ],
+                        requestBody: """{
+                            "permission": "${PERMISSION_LEVEL}"
+                        }"""
+                    )
+                }
+            }
+        }
+        stage('Set Branch Protection for Main') {
+            steps {
+                script {
+                    httpRequest(
+                        httpMode: 'PUT',
+                        url: 'https://api.github.com/repos/' + YOUR_USERNAME + '/' + REPO_NAME + '/branches/' + MAIN_BRANCH + '/protection',
+                        contentType: 'APPLICATION_JSON',
+                        customHeaders: [
+                            [name: 'Authorization', value: 'Bearer ' + GITHUB_TOKEN],
+                            [name: 'Accept', value: 'application/vnd.github.luke-cage-preview+json'] // Required for branch protection
+                        ],
+                        requestBody: """{
+                            "required_status_checks": {
+                                "strict": true,
+                                "contexts": []
+                            },
+                            "enforce_admins": false,
+                            "required_pull_request_reviews": {
+                                "required_approving_review_count": 1,
+                                "dismiss_stale_reviews": true,
+                                "require_code_owner_reviews": true
+                            },
+                            "restrictions": null,
+                            "allow_force_pushes": false,
+                            "allow_deletions": false
+                        }"""
+                    )
+                }
+            }
+        }
+    }
+}
