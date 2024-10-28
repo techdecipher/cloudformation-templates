@@ -1,0 +1,47 @@
+version: 0.2
+
+env:
+  variables:
+    REPO_NAME: "my-serverless-app6"
+    GITHUB_USERNAME: "techdecipher"
+    BRANCH_NAME: "main" 
+  secrets-manager:
+    GITHUB_TOKEN: "github-token-coockie-cutter:mytoken-coockie-cutter"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.8
+    commands:
+      - pip install --upgrade pip
+      - pip install cookiecutter
+      - pip install awscli
+  pre_build:
+    commands:
+      - apt-get update -y
+      - apt-get install git -y
+      - git config --global user.email "waytopranav22@gmail.com"
+      - git config --global user.name "techdecipher"
+      
+      # New Step: Create the GitHub repository if it doesn’t exist
+      - echo "Creating GitHub repository $REPO_NAME if it does not exist"
+      - |
+        curl -u "$GITHUB_USERNAME:$GITHUB_TOKEN" \
+        -X POST https://api.github.com/user/repos \
+        -d "{\"name\":\"$REPO_NAME\"}" || echo "Repository $REPO_NAME might already exist."
+      
+  build:
+    commands:
+      - cookiecutter https://github.com/aws-samples/cookiecutter-aws-sam-python --no-input project_name=$REPO_NAME
+      - cd $REPO_NAME
+  post_build:
+    commands:
+      - git init
+      - git remote add origin https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/$GITHUB_USERNAME/$REPO_NAME.git
+      - git checkout -b $BRANCH_NAME
+      - git add .
+      - git commit -m "Initial commit via CodeBuild"
+      - git push -u origin $BRANCH_NAME
+artifacts:
+  files:
+    - '**/*'
